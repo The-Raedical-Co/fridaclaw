@@ -14,6 +14,10 @@ export function setDefaultSecurityHeaders(
 ) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
+  // Defense in depth: block framing to prevent clickjacking.
+  res.setHeader("X-Frame-Options", "DENY");
+  // Defense in depth: prevent Flash/PDF cross-domain leaks.
+  res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
   const strictTransportSecurity = opts?.strictTransportSecurity;
   if (typeof strictTransportSecurity === "string" && strictTransportSecurity.length > 0) {
     res.setHeader("Strict-Transport-Security", strictTransportSecurity);
