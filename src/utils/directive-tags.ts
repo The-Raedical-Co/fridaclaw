@@ -44,6 +44,9 @@ export function stripInlineDirectiveTagsForDisplay(text: string): StripInlineDir
   if (!text) {
     return { text, changed: false };
   }
+  if (!text.includes("[[")) {
+    return { text, changed: false };
+  }
   const withoutAudio = text.replace(AUDIO_TAG_RE, "");
   const stripped = withoutAudio.replace(REPLY_TAG_RE, "");
   return {
@@ -104,24 +107,26 @@ export function parseInlineDirectives(
   let sawCurrent = false;
   let lastExplicitId: string | undefined;
 
-  cleaned = cleaned.replace(AUDIO_TAG_RE, (match) => {
-    audioAsVoice = true;
-    hasAudioTag = true;
-    return stripAudioTag ? " " : match;
-  });
+  if (text.includes("[[")) {
+    cleaned = cleaned.replace(AUDIO_TAG_RE, (match) => {
+      audioAsVoice = true;
+      hasAudioTag = true;
+      return stripAudioTag ? " " : match;
+    });
 
-  cleaned = cleaned.replace(REPLY_TAG_RE, (match, idRaw: string | undefined) => {
-    hasReplyTag = true;
-    if (idRaw === undefined) {
-      sawCurrent = true;
-    } else {
-      const id = idRaw.trim();
-      if (id) {
-        lastExplicitId = id;
+    cleaned = cleaned.replace(REPLY_TAG_RE, (match, idRaw: string | undefined) => {
+      hasReplyTag = true;
+      if (idRaw === undefined) {
+        sawCurrent = true;
+      } else {
+        const id = idRaw.trim();
+        if (id) {
+          lastExplicitId = id;
+        }
       }
-    }
-    return stripReplyTags ? " " : match;
-  });
+      return stripReplyTags ? " " : match;
+    });
+  }
 
   cleaned = normalizeDirectiveWhitespace(cleaned);
 
