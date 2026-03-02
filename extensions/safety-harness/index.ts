@@ -32,9 +32,10 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
     const rateLimiter = new RateLimiter(DEFAULT_RATE_LIMITS);
     const chainDetector = new ChainDetector(DEFAULT_CHAIN_RULES);
 
-    // Track the most recent effective tier per toolName so after_tool_call can audit correctly.
-    // Last-call-wins is acceptable for Phase 1 (single-agent, sequential tool calls).
+    // Track the most recent effective tier and chain flags per toolName so after_tool_call
+    // can audit correctly. Last-call-wins is acceptable for Phase 1 (sequential tool calls).
     const lastTierByTool = new Map<string, HarnessTier>();
+    const lastChainFlagsByTool = new Map<string, string[]>();
 
     api.logger.info(`[safety-harness] initialized in ${mode} mode, audit → ${auditPath}`);
 
@@ -42,7 +43,7 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
       "before_tool_call",
       async (
         event: PluginHookBeforeToolCallEvent,
-        ctx: PluginHookToolContext,
+        _ctx: PluginHookToolContext,
       ): Promise<PluginHookBeforeToolCallResult | void> => {
         const { toolName, params } = event;
         const verb = classifyVerb(toolName);
@@ -50,12 +51,14 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
         // 1. Rules engine classification
         const classification = engine.classify(toolName, params);
 
-        // 2. Rate limit check (may escalate tier)
+        // 2. Rate limit check (may escalate tier) — build a local reason string,
+        //    never mutate the engine's return object (Issue 7).
         const rateCategory = RateLimiter.toRateCategory(verb);
         let effectiveTier = classification.tier;
+        let effectiveReason = classification.reason;
         if (rateCategory && !rateLimiter.check(rateCategory)) {
           effectiveTier = "block";
-          classification.reason = `Rate limit exceeded for ${rateCategory}: ${classification.reason}`;
+          effectiveReason = `Rate limit exceeded for ${rateCategory}: ${effectiveReason}`;
         }
 
         // 3. Chain detection
@@ -66,14 +69,15 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
         });
         if (chainFlags.length > 0) {
           effectiveTier = "block";
-          classification.reason = `Chain detected (${chainFlags.join(", ")}): ${classification.reason}`;
+          effectiveReason = `Chain detected (${chainFlags.join(", ")}): ${effectiveReason}`;
         }
 
-        // Store effective tier for after_tool_call audit
+        // Store effective tier and chain flags for after_tool_call audit
         lastTierByTool.set(toolName, effectiveTier);
+        lastChainFlagsByTool.set(toolName, chainFlags);
 
         api.logger.info(
-          `[safety-harness] ${toolName}: tier=${effectiveTier} reason="${classification.reason}" mode=${mode}`,
+          `[safety-harness] ${toolName}: tier=${effectiveTier} reason="${effectiveReason}" mode=${mode}`,
         );
 
         // In observe mode, never block
@@ -83,8 +87,8 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
 
         // In enforce mode, block if tier is "block"
         if (effectiveTier === "block") {
-          // Return generic message to AI, log details only in audit trail
-          api.logger.warn(`[safety-harness] BLOCKED ${toolName}: ${classification.reason}`);
+          // Return generic message to AI; log details only in audit trail
+          api.logger.warn(`[safety-harness] BLOCKED ${toolName}: ${effectiveReason}`);
           return {
             block: true,
             blockReason: "Action blocked by safety policy. Please try a different approach.",
@@ -99,22 +103,33 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
 
     api.on(
       "after_tool_call",
-      async (event: PluginHookAfterToolCallEvent, ctx: PluginHookToolContext) => {
+      async (event: PluginHookAfterToolCallEvent, _ctx: PluginHookToolContext) => {
         const { toolName, params } = event;
         const verb = classifyVerb(toolName);
 
-        // Record in rate limiter
-        const rateCategory = RateLimiter.toRateCategory(verb);
-        if (rateCategory) {
-          rateLimiter.record(rateCategory);
-        }
+        // Resolve the tier captured during before_tool_call (or re-classify if the
+        // pre-hook was skipped, e.g. in tests that call after_tool_call in isolation).
+        const tier: HarnessTier =
+          lastTierByTool.get(toolName) ?? engine.classify(toolName, params).tier;
+        const chainFlags: string[] = lastChainFlagsByTool.get(toolName) ?? [];
+        // Consume stored values so stale entries don't bleed across calls
+        lastTierByTool.delete(toolName);
+        lastChainFlagsByTool.delete(toolName);
 
-        // Record in chain detector ledger
-        chainDetector.record({
-          tool: toolName,
-          verb,
-          target: toolName.split(".")[0] || toolName,
-        });
+        // Only record quota and ledger for calls that actually executed (Issues 1 & 2).
+        // Blocked calls were rejected before execution — consuming quota would be wrong.
+        if (tier !== "block") {
+          const rateCategory = RateLimiter.toRateCategory(verb);
+          if (rateCategory) {
+            rateLimiter.record(rateCategory);
+          }
+
+          chainDetector.record({
+            tool: toolName,
+            verb,
+            target: toolName.split(".")[0] || toolName,
+          });
+        }
 
         // Build args summary (sanitized — no full bodies or secrets)
         // Expanded redaction list for credential fields
@@ -126,21 +141,15 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
           )
           .join(", ");
 
-        // Write audit log — use the tier captured during before_tool_call (or re-classify
-        // if before_tool_call was never called, e.g. in tests that skip the pre-hook).
-        const tier: HarnessTier =
-          lastTierByTool.get(toolName) ?? engine.classify(toolName, params).tier;
-        lastTierByTool.delete(toolName); // consume so stale values don't bleed across calls
-
         const result = event.error ? "error" : "executed";
         await audit
           .log({
             tool: toolName,
             argsSummary,
             tier,
-            tainted: false, // Phase 4
+            tainted: false, // Phase 4 stub
             result,
-            chainFlags: [],
+            chainFlags,
             rateWindow: rateLimiter.getCounts(),
           })
           .catch((err) => {
