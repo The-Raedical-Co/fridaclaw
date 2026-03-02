@@ -5,12 +5,15 @@ import type {
   PluginHookBeforeToolCallResult,
   PluginHookAfterToolCallEvent,
   PluginHookToolContext,
+  PluginHookMessageSendingEvent,
+  PluginHookMessageContext,
 } from "openclaw/plugin-sdk";
 import { AuditLogger } from "./audit.js";
 import { BUILTIN_RULES } from "./builtin-rules.js";
 import { ChainDetector, DEFAULT_CHAIN_RULES } from "./chain-detector.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
 import { RulesEngine } from "./engine.js";
+import { scanOutboundMessage } from "./message-guard.js";
 import { RateLimiter, DEFAULT_RATE_LIMITS } from "./rate-limiter.js";
 import type { HarnessMode, HarnessTier } from "./types.js";
 import { classifyVerb } from "./verb-classifier.js";
@@ -179,6 +182,21 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
           .catch((err) => {
             api.logger.error(`[safety-harness] audit write failed: ${err}`);
           });
+      },
+      { priority: HARNESS_PRIORITY },
+    );
+
+    api.on(
+      "message_sending",
+      async (event: PluginHookMessageSendingEvent, _ctx: PluginHookMessageContext) => {
+        const scan = scanOutboundMessage(event.content ?? "");
+        if (scan.flagged) {
+          api.logger.warn(`[safety-harness] flagged outbound message: ${scan.reason}`);
+          if (mode === "enforce") {
+            return { cancel: true };
+          }
+        }
+        return undefined;
       },
       { priority: HARNESS_PRIORITY },
     );

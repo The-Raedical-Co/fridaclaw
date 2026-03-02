@@ -9,7 +9,7 @@ describe("safety-harness plugin", () => {
     expect(typeof safetyHarnessPlugin.register).toBe("function");
   });
 
-  it("registers before_tool_call and after_tool_call hooks", async () => {
+  it("registers before_tool_call, after_tool_call, and message_sending hooks", async () => {
     const onSpy = vi.fn();
     const mockApi = {
       id: "safety-harness",
@@ -25,5 +25,6 @@ describe("safety-harness plugin", () => {
     const hookNames = onSpy.mock.calls.map((c: any[]) => c[0]);
     expect(hookNames).toContain("before_tool_call");
     expect(hookNames).toContain("after_tool_call");
+    expect(hookNames).toContain("message_sending");
   });
 });
