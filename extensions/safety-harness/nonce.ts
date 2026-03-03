@@ -24,8 +24,7 @@ export class NonceChallenge {
 
   verify(nonce: string): boolean {
     if (nonce !== this.nonce) return false;
-    if (Date.now() > this.expiresAt) return false;
-    return true;
+    return !this.isExpired();
   }
 
   isExpired(): boolean {

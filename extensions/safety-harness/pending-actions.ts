@@ -23,16 +23,8 @@ export class PendingActionStore {
     return this.actions.get(id);
   }
 
-  resolve(id: string, status: "approved" | "denied"): void {
+  remove(id: string): void {
     this.actions.delete(id);
-  }
-
-  expire(id: string): void {
-    const action = this.actions.get(id);
-    if (action) {
-      action.status = "expired";
-      this.actions.delete(id);
-    }
   }
 
   getExpired(): PendingAction[] {

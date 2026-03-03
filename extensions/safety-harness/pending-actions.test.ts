@@ -26,7 +26,7 @@ describe("PendingActionStore", () => {
     expect(store.get(action.id)).toEqual(action);
   });
 
-  it("removes action on resolution", () => {
+  it("removes action on approved", () => {
     const action: PendingAction = {
       id: "action-1",
       tool: "email.delete",
@@ -36,7 +36,21 @@ describe("PendingActionStore", () => {
       expiresAt: Date.now() + 300_000,
     };
     store.add(action);
-    store.resolve(action.id, "approved");
+    store.remove(action.id);
+    expect(store.get(action.id)).toBeUndefined();
+  });
+
+  it("removes action on denied", () => {
+    const action: PendingAction = {
+      id: "action-2",
+      tool: "email.send",
+      params: { to: "test@example.com" },
+      nonce: "654321",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 300_000,
+    };
+    store.add(action);
+    store.remove(action.id);
     expect(store.get(action.id)).toBeUndefined();
   });
 

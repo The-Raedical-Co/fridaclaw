@@ -41,4 +41,13 @@ describe("NonceChallenge", () => {
     expect(challenge.verify(challenge.nonce)).toBe(false);
     vi.useRealTimers();
   });
+
+  it("checks isExpired", () => {
+    vi.useFakeTimers();
+    const challenge = new NonceChallenge("email.delete", { count: 3 }, 5_000);
+    expect(challenge.isExpired()).toBe(false);
+    vi.advanceTimersByTime(6_000);
+    expect(challenge.isExpired()).toBe(true);
+    vi.useRealTimers();
+  });
 });
