@@ -21,6 +21,7 @@ import { scanOutboundMessage } from "./message-guard.js";
 import { NonceChallenge } from "./nonce.js";
 import { PendingActionStore } from "./pending-actions.js";
 import { RateLimiter, DEFAULT_RATE_LIMITS } from "./rate-limiter.js";
+import { TaintRegistry } from "./taint-registry.js";
 import type { HarnessMode, HarnessTier } from "./types.js";
 import { classifyVerb } from "./verb-classifier.js";
 
@@ -55,6 +56,7 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
       }
     });
     const confirmationListener = new ConfirmationListener(pendingStore);
+    const taintRegistry = new TaintRegistry();
 
     // Track the most recent effective tier and chain flags per toolName so after_tool_call
     // can audit correctly. Last-call-wins is acceptable for Phase 1 (sequential tool calls).
@@ -106,6 +108,15 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
           if (chainFlags.length > 0) {
             effectiveTier = "block";
             effectiveReason = `Chain detected (${chainFlags.join(", ")}): ${effectiveReason}`;
+          }
+
+          // 4. Taint check - escalate allow to confirm if args contain tainted data
+          const hasTaintedArgs = taintRegistry.hasTaintedValue(params);
+          if (hasTaintedArgs && effectiveTier === "allow") {
+            effectiveTier = "confirm";
+            api.logger.info(
+              `[safety-harness] escalated ${toolName} to confirm due to tainted args`,
+            );
           }
 
           // Store effective tier and chain flags for after_tool_call audit
