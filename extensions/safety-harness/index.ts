@@ -14,6 +14,7 @@ import { AuditLogger } from "./audit.js";
 import { BUILTIN_RULES } from "./builtin-rules.js";
 import { ChainDetector, DEFAULT_CHAIN_RULES } from "./chain-detector.js";
 import { CircuitBreaker } from "./circuit-breaker.js";
+import { ConfirmationListener } from "./confirmation-listener.js";
 import { ConfirmationSender } from "./confirmation-sender.js";
 import { RulesEngine } from "./engine.js";
 import { scanOutboundMessage } from "./message-guard.js";
@@ -53,6 +54,7 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
         throw err;
       }
     });
+    const confirmationListener = new ConfirmationListener(pendingStore);
 
     // Track the most recent effective tier and chain flags per toolName so after_tool_call
     // can audit correctly. Last-call-wins is acceptable for Phase 1 (sequential tool calls).
@@ -227,6 +229,19 @@ export const safetyHarnessPlugin: OpenClawPluginDefinition = {
           .catch((err) => {
             api.logger.error(`[safety-harness] audit write failed: ${err}`);
           });
+      },
+      { priority: HARNESS_PRIORITY },
+    );
+
+    api.on(
+      "message_received",
+      async (event: { sessionId: string; content: string; userId: string }) => {
+        const result = await confirmationListener.handleReply(event);
+        if (result.approved) {
+          api.logger.info(`[safety-harness] confirmation approved: ${result.actionId}`);
+        } else if (result.reason) {
+          api.logger.debug(`[safety-harness] confirmation rejected: ${result.reason}`);
+        }
       },
       { priority: HARNESS_PRIORITY },
     );
