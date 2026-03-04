@@ -44,6 +44,10 @@ export function stripInlineDirectiveTagsForDisplay(text: string): StripInlineDir
   if (!text) {
     return { text, changed: false };
   }
+  // Fast-path guard: avoid expensive regex execution if there are no possible directive tags
+  if (!text.includes("[[")) {
+    return { text, changed: false };
+  }
   const withoutAudio = text.replace(AUDIO_TAG_RE, "");
   const stripped = withoutAudio.replace(REPLY_TAG_RE, "");
   return {
